@@ -3,7 +3,6 @@ package main
 import (
 	"bytes"
 	"encoding/binary"
-	"fmt"
 	"log"
 	"os"
 )
@@ -11,9 +10,14 @@ import (
 func check(e error) {
 	if e != nil {
 		log.Fatal(e)
-		panic(e)
 	}
 }
+
+const (
+	MIDI_V0 = 0 // Single track SMF
+	MIDI_V1 = 1 // Multi-Track SMF, with first track reserved for service commands
+	MIDI_V2 = 2
+)
 
 // High part of 4 bits
 const (
@@ -81,11 +85,10 @@ const mtrk_header string = "MTrk"
 
 func readFromStream(stream *bytes.Reader, size int) []byte {
 	data := make([]byte, size)
-	readed, err := stream.Read(data)
+	read, err := stream.Read(data)
 	check(err)
-	if readed != size {
+	if read != size {
 		log.Fatal("Stream Error sizes incorrect")
-		panic("Stream Error sizes incorrect")
 	}
 	return data
 }
@@ -107,16 +110,15 @@ func (ctx *MidiEventCode) isMetaEvent() bool {
 	return ctx.MainCmd == SYSTEM_EVENT && ctx.SubCmd == SYS_META_EVENT
 }
 
-func (ctx *MidiEventCode) mainCmd() uint8 {
-	return ctx.MainCmd
-}
-
-func (ctx *MidiEventCode) subCmd() uint8 {
-	return ctx.SubCmd
-}
-
 func (ctx *MidiEventCode) fullCmd() uint8 {
 	return (ctx.MainCmd << 4) | ctx.SubCmd
+}
+
+func MidiEventCodeFromByte(cmd_byte uint8) MidiEventCode {
+	midi_event_code := MidiEventCode{}
+	midi_event_code.MainCmd = ((cmd_byte >> 4) & 0x0F)
+	midi_event_code.SubCmd = (cmd_byte & 0x0F)
+	return midi_event_code
 }
 
 func MidiEventCodeFromStream(track_stream *bytes.Reader) MidiEventCode {
@@ -161,7 +163,7 @@ type Event struct {
 func EventFromStream(track_stream *bytes.Reader) Event {
 	event := Event{}
 	event.Cmd = MidiEventCodeFromStream(track_stream)
-	fmt.Println(event.Cmd.fullCmd())
+	//fmt.Println(event.Cmd.fullCmd())
 
 	if event.Cmd.isMetaEvent() {
 		event.MetaEvent = true
@@ -174,7 +176,7 @@ func EventFromStream(track_stream *bytes.Reader) Event {
 		event.Data = readFromStream(track_stream, int(data_size.Value))
 	} else {
 		event.Data = readFromStream(track_stream, 1)
-		switch event.Cmd.mainCmd() {
+		switch event.Cmd.MainCmd {
 		case NOTE_OFF:
 			event.Data = append(event.Data, readFromStream(track_stream, 1)[0])
 		case NOTE_ON:
@@ -209,11 +211,10 @@ func MidiTrackFromStream(file *os.File) MidiTrack {
 	err := binary.Read(file, binary.BigEndian, &midi_track.MtrkHeader)
 	check(err)
 	track_payload := make([]byte, midi_track.MtrkHeader.Length)
-	readed, err := file.Read(track_payload)
+	read, err := file.Read(track_payload)
 	check(err)
-	if readed != int(midi_track.MtrkHeader.Length) {
+	if read != int(midi_track.MtrkHeader.Length) {
 		log.Fatal("Error sizes incorrect")
-		panic("Error sizes incorrect")
 	}
 	// read VLV pre-delay
 	track_stream := bytes.NewReader(track_payload)
@@ -226,9 +227,19 @@ func MidiTrackFromStream(file *os.File) MidiTrack {
 	return midi_track
 }
 
+func (ctx *MidiTrack) findEventByCmd(cmd MidiEventCode) Event {
+	for i := 0; i < len(ctx.Events); i++ {
+		if ctx.Events[i].Cmd == cmd {
+			return ctx.Events[i]
+		}
+	}
+	return Event{}
+}
+
 type MidiFile struct {
-	Mthd       MthdHeader
-	MidiTracks []MidiTrack
+	Mthd            MthdHeader
+	PulsesPerSedond float64
+	Tracks          []MidiTrack
 }
 
 func MidiFromPath(path string) MidiFile {
@@ -236,25 +247,12 @@ func MidiFromPath(path string) MidiFile {
 	check(err)
 	defer file.Close()
 
-	midi_file := MidiFile{}
-	err = binary.Read(file, binary.BigEndian, &midi_file.Mthd)
+	midi := MidiFile{}
+	err = binary.Read(file, binary.BigEndian, &midi.Mthd)
 	check(err)
 
-	for i := 0; i < int(midi_file.Mthd.Mtrk_count); i++ {
-		fmt.Println(i)
-		midi_file.MidiTracks = append(midi_file.MidiTracks, MidiTrackFromStream(file))
+	for i := 0; i < int(midi.Mthd.Mtrk_count); i++ {
+		midi.Tracks = append(midi.Tracks, MidiTrackFromStream(file))
 	}
-
-	return midi_file
-}
-
-func (midi *MidiFile) Test() {
-	fmt.Println("Test")
-}
-
-func read_testing() {
-
-	file_path := "/Users/altucor/projects/personal/programming/go/midi-to-mikrotik-go/input/later_bitches_test.mid"
-	midi := MidiFromPath(file_path)
-	midi.Test()
+	return midi
 }
