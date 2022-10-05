@@ -7,11 +7,8 @@ import (
 	"os"
 )
 
-func check(e error) {
-	if e != nil {
-		log.Fatal(e)
-	}
-}
+const g_mthd_header string = "MThd"
+const g_mtrk_header string = "MTrk"
 
 const (
 	MIDI_V0 = 0 // Single track SMF
@@ -80,8 +77,11 @@ const (
 	PROPRIETARY_EVENT  = 0x7F
 )
 
-const mthd_header string = "MThd"
-const mtrk_header string = "MTrk"
+func check(e error) {
+	if e != nil {
+		log.Fatal(e)
+	}
+}
 
 func readFromStream(stream *bytes.Reader, size int) []byte {
 	data := make([]byte, size)
@@ -207,24 +207,29 @@ type MidiTrack struct {
 }
 
 func MidiTrackFromStream(file *os.File) MidiTrack {
-	midi_track := MidiTrack{}
-	err := binary.Read(file, binary.BigEndian, &midi_track.MtrkHeader)
+	track := MidiTrack{}
+	err := binary.Read(file, binary.BigEndian, &track.MtrkHeader)
 	check(err)
-	track_payload := make([]byte, midi_track.MtrkHeader.Length)
+	temp := make([]byte, 4)
+	binary.BigEndian.PutUint32(temp, track.MtrkHeader.Header)
+	if string(temp) != g_mtrk_header {
+		log.Fatal("Error invalid MTrk header")
+	}
+	track_payload := make([]byte, track.MtrkHeader.Length)
 	read, err := file.Read(track_payload)
 	check(err)
-	if read != int(midi_track.MtrkHeader.Length) {
+	if read != int(track.MtrkHeader.Length) {
 		log.Fatal("Error sizes incorrect")
 	}
 	// read VLV pre-delay
 	track_stream := bytes.NewReader(track_payload)
-	midi_track.Predelay = VLVFromStream(track_stream)
+	track.Predelay = VLVFromStream(track_stream)
 
 	for track_stream.Len() > 0 {
 		// read events until end of available
-		midi_track.Events = append(midi_track.Events, EventFromStream(track_stream))
+		track.Events = append(track.Events, EventFromStream(track_stream))
 	}
-	return midi_track
+	return track
 }
 
 func (ctx *MidiTrack) findEventByCmd(cmd MidiEventCode) Event {
@@ -250,6 +255,12 @@ func MidiFromPath(path string) MidiFile {
 	midi := MidiFile{}
 	err = binary.Read(file, binary.BigEndian, &midi.Mthd)
 	check(err)
+
+	temp := make([]byte, 4)
+	binary.BigEndian.PutUint32(temp, midi.Mthd.Header)
+	if string(temp) != g_mthd_header {
+		log.Fatal("Error invalid MThd header")
+	}
 
 	for i := 0; i < int(midi.Mthd.Mtrk_count); i++ {
 		midi.Tracks = append(midi.Tracks, MidiTrackFromStream(file))
