@@ -40,11 +40,6 @@ func getHeader(cfg BuildConfig, header ScriptHeader) string {
 	outputBuffer += "# Track name: " + header.track_name + "\n"
 	outputBuffer += "# Instrument name: " + header.instrument_name + "\n"
 	outputBuffer += "# Track copyright: " + header.track_copyright + "\n"
-	//outputBuffer += "# Track text: " + chunk.mtrkChunkHandler.getTrackText() + "\n";
-	//outputBuffer += "# Track copyright: " + chunk.mtrkChunkHandler.getCopyright() + "\n";
-	//outputBuffer += "# Vocals: " + chunk.mtrkChunkHandler.getInstrumentName() + "\n";
-	//outputBuffer += "# Text marker: " + chunk.mtrkChunkHandler.getTextMarker() + "\n";
-	//outputBuffer += "# Cue Point: " + chunk.mtrkChunkHandler.getCuePoint() + "\n";
 	outputBuffer += "#-------------------------------------------------#\n\n"
 	return outputBuffer
 }
@@ -53,31 +48,41 @@ func durationToMs(vlv VLV, pulses_per_second float64) float64 {
 	return float64(vlv.Value) * pulses_per_second
 }
 
+func buildNoteDuration(event Event, pulses_per_second float64) string {
+	duration := getNoteDuration(event)
+	return fmt.Sprintf("%f", durationToMs(duration, pulses_per_second)) + "ms;"
+}
+
+func buildDelay(event Event, pulses_per_second float64) string {
+	duration := getNoteDuration(event)
+	if duration.Value != 0 {
+		return ":delay " + buildNoteDuration(event, pulses_per_second) + "\n"
+	}
+	return ""
+}
+
 func buildNote(event Event, cfg BuildConfig, pulses_per_second float64, current_time float64) string {
 	/*
 	 * :beep frequency=440 length=1000ms;
 	 * :delay 1000ms;
 	 */
 	var output string = ""
-	freq_cmd, duration := getNote(event)
-	freq := g_freqNotes[freq_cmd+(cfg.octave_shift*NOTES_IN_OCTAVE)+cfg.note_shift] + cfg.fine_tuning
-	duration_text := fmt.Sprintf("%f", durationToMs(duration, pulses_per_second)) + "ms;"
+
 	if event.Cmd.MainCmd == NOTE_ON {
-		output += ":beep frequency=" + fmt.Sprintf("%f", freq) + " length=" + duration_text
+		freq_cmd := getNoteFreq(event)
+		freq := g_freqNotes[freq_cmd+(cfg.octave_shift*NOTES_IN_OCTAVE)+cfg.note_shift] + cfg.fine_tuning
+		output += ":beep frequency=" + fmt.Sprintf("%f", freq) + " length=" + buildNoteDuration(event, pulses_per_second)
 		if cfg.comments {
 			output += " # " + g_symbolicNotes[freq_cmd+(cfg.octave_shift*NOTES_IN_OCTAVE)+cfg.note_shift]
 			if cfg.fine_tuning != 0 {
 				output += " " + fmt.Sprintf("%+.3f", cfg.fine_tuning) + "Hz"
 			}
-
 			output += " @ " + getTimeAsText(current_time) + "\n"
 		} else {
 			output += "\n"
 		}
 	}
-	if duration.Value != 0 {
-		output += ":delay " + duration_text + "\n"
-	}
+	output += buildDelay(event, pulses_per_second)
 
 	return output
 }
@@ -112,12 +117,20 @@ func generateScript(midi MidiFile, cfg BuildConfig) string {
 
 	var body string = ""
 	// TODO: Here add pre-delay
-	header.track_length = durationToMs(midi.Tracks[cfg.track].Predelay, header.pulses_per_second)
+	header.track_length = 0.0
+	if midi.Tracks[cfg.track].Predelay.Value != 0 {
+		header.track_length += durationToMs(midi.Tracks[cfg.track].Predelay, header.pulses_per_second)
+		body += ":delay " + fmt.Sprintf("%f", header.track_length) + "ms;\n"
+	}
+
 	var note_on uint64 = 0
 	var note_off uint64 = 0
 	for i := 0; i < len(midi.Tracks[cfg.track].Events); i++ {
 		event := midi.Tracks[cfg.track].Events[i]
 		if event.Cmd.MainCmd == NOTE_ON || event.Cmd.MainCmd == NOTE_OFF {
+			if event.Cmd.SubCmd != uint8(cfg.channel) {
+				continue
+			}
 			if event.Cmd.MainCmd == NOTE_ON {
 				note_on++
 			} else if event.Cmd.MainCmd == NOTE_OFF {
@@ -125,17 +138,22 @@ func generateScript(midi MidiFile, cfg BuildConfig) string {
 			}
 			temp := buildNote(event, cfg, header.pulses_per_second, header.track_length)
 			body += temp
+		} else {
+			body += buildDelay(event, header.pulses_per_second)
 		}
 		header.track_length += durationToMs(midi.Tracks[cfg.track].Events[i].Delay, header.pulses_per_second)
 	}
 	if note_on != note_off {
 		log.Fatal("Error not equal count of events: note_on = ", note_on, " note_off = ", note_off)
 	}
+	header.notes_count = note_on
 
 	output += getHeader(cfg, header)
 	output += body
+	output += "#---------------------- END ----------------------#\n"
 	if cfg.print_stdout {
 		fmt.Print(output)
 	}
+
 	return output
 }

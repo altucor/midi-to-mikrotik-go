@@ -153,6 +153,7 @@ func VLVFromStream(track_stream *bytes.Reader) VLV {
 	return vlv
 }
 
+// TODO: Rewrite all stuff to process delays as prefix of event, check kaitai implementation
 type Event struct {
 	MetaEvent bool
 	Cmd       MidiEventCode
@@ -241,6 +242,33 @@ func (ctx *MidiTrack) findEventByCmd(cmd MidiEventCode) Event {
 	return Event{}
 }
 
+type TrackAnalysis struct {
+	name     string
+	channels map[int]map[string]int
+}
+
+func (ctx *MidiTrack) analyze() TrackAnalysis {
+	analysis := TrackAnalysis{}
+	analysis.name = getTextFromEvent(ctx.findEventByCmd(MidiEventCodeFromByte(TRACK_NAME)))
+	analysis.channels = make(map[int]map[string]int)
+	for i := 0; i < len(ctx.Events); i++ {
+		event := ctx.Events[i]
+		// for each event
+		if event.Cmd.MainCmd == NOTE_ON || event.Cmd.MainCmd == NOTE_OFF {
+			if _, ok := analysis.channels[int(event.Cmd.SubCmd)]; !ok {
+				analysis.channels[int(event.Cmd.SubCmd)] = make(map[string]int)
+			}
+			if event.Cmd.MainCmd == NOTE_ON {
+				analysis.channels[int(event.Cmd.SubCmd)]["on"]++
+			} else if event.Cmd.MainCmd == NOTE_OFF {
+				analysis.channels[int(event.Cmd.SubCmd)]["off"]++
+			}
+		}
+	}
+
+	return analysis
+}
+
 type MidiFile struct {
 	Mthd            MthdHeader
 	PulsesPerSedond float64
@@ -266,4 +294,13 @@ func MidiFromPath(path string) MidiFile {
 		midi.Tracks = append(midi.Tracks, MidiTrackFromStream(file))
 	}
 	return midi
+}
+
+func (ctx *MidiFile) analyze() []TrackAnalysis {
+	var midi_analysis []TrackAnalysis
+	for track := 0; track < int(ctx.Mthd.Mtrk_count); track++ {
+		// for each track
+		midi_analysis = append(midi_analysis, ctx.Tracks[track].analyze())
+	}
+	return midi_analysis
 }

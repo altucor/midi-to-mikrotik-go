@@ -10,9 +10,12 @@ func getEventTempo(event Event) uint64 {
 	return tempo
 }
 
-// freq_cmd, VLV
-func getNote(event Event) (int, VLV) {
-	return int(event.Data[0]), event.Delay
+func getNoteFreq(event Event) int {
+	return int(event.Data[0])
+}
+
+func getNoteDuration(event Event) VLV {
+	return event.Delay
 }
 
 func getTextFromEvent(event Event) string {

@@ -2,6 +2,8 @@ package main
 
 import (
 	"flag"
+	"fmt"
+	"os"
 )
 
 type BuildConfig struct {
@@ -30,8 +32,31 @@ func main() {
 	flag.BoolVar(&cfg.comments, "comments", false, "Enable comments for each note")
 	flag.BoolVar(&cfg.print_stdout, "print", false, "Print output to stdout")
 
+	var analyze bool = false
+	flag.BoolVar(&analyze, "analyze", false, "Analyze midi track")
+	var process_all bool = false
+	flag.BoolVar(&process_all, "all", false, "Process all tracks")
+
 	flag.Parse()
 
 	midi := MidiFromPath(cfg.file_path)
-	generateScript(midi, cfg)
+	if analyze {
+		auto_cfg := cfg
+		analysis := midi.analyze()
+		for track_index, track := range analysis {
+			for channel_index, channel := range track.channels {
+				fmt.Println("# Track index:", track_index, "Track name:", track.name, "Found notes ON/OFF:", channel["on"], "/", channel["off"])
+				if process_all {
+					fmt.Println("# Processing...")
+					auto_cfg.channel = uint(channel_index)
+					auto_cfg.track = uint(track_index)
+					generateScript(midi, auto_cfg)
+				}
+			}
+		}
+	}
+	output_script := generateScript(midi, cfg)
+	err := os.WriteFile(cfg.file_path+fmt.Sprintf("_%d", cfg.track)+".txt", []byte(output_script), 0644)
+	check(err)
+
 }
