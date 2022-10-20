@@ -67,7 +67,6 @@ func buildNote(event Event, cfg BuildConfig, pulses_per_second float64, current_
 	 * :delay 1000ms;
 	 */
 	var output string = ""
-
 	if event.Cmd.MainCmd == NOTE_ON {
 		freq_cmd := getNoteFreq(event)
 		freq := g_freqNotes[freq_cmd+(cfg.octave_shift*NOTES_IN_OCTAVE)+cfg.note_shift] + cfg.fine_tuning
@@ -83,11 +82,57 @@ func buildNote(event Event, cfg BuildConfig, pulses_per_second float64, current_
 		}
 	}
 	output += buildDelay(event, pulses_per_second)
-
 	return output
 }
 
+type Note struct {
+	start    float64
+	end      float64
+	freq_cmd int
+	velocity int
+}
+
+func NoteFromEvent(event Event, time float64) Note {
+	note := Note{}
+	note.start = time
+	note.freq_cmd = getNoteFreq(event)
+	note.velocity = getNoteVelocity(event)
+	return note
+}
+
+func (ctx *Note) isUnfinished(event Event) bool {
+	return ctx.freq_cmd == getNoteFreq(event)
+}
+
+func (ctx *Note) setEnd(end float64) {
+	ctx.end = end
+}
+
+type Sequence struct {
+	track_name        string
+	instrument_name   string
+	track_copyright   string
+	length            float64
+	pulses_per_second float64
+	channel           uint
+	bpm               uint64
+	notes             []Note
+}
+
+func (ctx *Sequence) addNote(note Note) {
+	ctx.notes = append(ctx.notes, note)
+}
+
+func (ctx *Sequence) setEndForUnfinished(event Event, time float64) {
+	for index := range ctx.notes {
+		if ctx.notes[index].isUnfinished(event) {
+			ctx.notes[index].setEnd(time)
+		}
+	}
+}
+
 func generateScript(midi MidiFile, cfg BuildConfig) string {
+	var overlay_detect [NOTES_IN_OCTAVE * 10]bool
 	var output = ""
 	var header ScriptHeader
 	header.instrument_name = g_unknown_text
@@ -115,29 +160,47 @@ func generateScript(midi MidiFile, cfg BuildConfig) string {
 		log.Fatal("Unknown midi format detected: ", midi.Mthd.Format)
 	}
 
+	sequence := Sequence{}
+	var unfinished_notes []Note
+
 	var body string = ""
-	// TODO: Here add pre-delay
 	header.track_length = 0.0
 	if midi.Tracks[cfg.track].Predelay.Value != 0 {
-		header.track_length += durationToMs(midi.Tracks[cfg.track].Predelay, header.pulses_per_second)
+		sequence.length += durationToMs(midi.Tracks[cfg.track].Predelay, header.pulses_per_second)
 		body += ":delay " + fmt.Sprintf("%f", header.track_length) + "ms;\n"
 	}
 
 	var note_on uint64 = 0
 	var note_off uint64 = 0
+
 	for i := 0; i < len(midi.Tracks[cfg.track].Events); i++ {
 		event := midi.Tracks[cfg.track].Events[i]
+		if event.Cmd.MainCmd == NOTE_ON {
+			note := NoteFromEvent(event, sequence.length)
+			unfinished_notes = append(unfinished_notes, note)
+		}
+		if event.Cmd.MainCmd == NOTE_OFF {
+
+		}
 		if event.Cmd.MainCmd == NOTE_ON || event.Cmd.MainCmd == NOTE_OFF {
 			if event.Cmd.SubCmd != uint8(cfg.channel) {
 				continue
 			}
+			note_text := buildNote(event, cfg, header.pulses_per_second, header.track_length)
+			if !overlay_detect[getNoteFreq(event)] {
+				body += note_text
+			} else {
+				fmt.Println("Note overlay detected!")
+				fmt.Println(note_text)
+			}
+
 			if event.Cmd.MainCmd == NOTE_ON {
+				overlay_detect[getNoteFreq(event)] = true
 				note_on++
 			} else if event.Cmd.MainCmd == NOTE_OFF {
+				overlay_detect[getNoteFreq(event)] = false
 				note_off++
 			}
-			temp := buildNote(event, cfg, header.pulses_per_second, header.track_length)
-			body += temp
 		} else {
 			body += buildDelay(event, header.pulses_per_second)
 		}

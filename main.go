@@ -50,13 +50,18 @@ func main() {
 					fmt.Println("# Processing...")
 					auto_cfg.channel = uint(channel_index)
 					auto_cfg.track = uint(track_index)
-					generateScript(midi, auto_cfg)
+					//sequence := generateMikrotikSequence(midi, auto_cfg)
+					//script_out := sequence.script(auto_cfg)
+					//fmt.Println(script_out)
+					script := generateScript(midi, auto_cfg)
+					err := os.WriteFile(cfg.file_path+fmt.Sprintf("_%d", auto_cfg.track)+".txt", []byte(script), 0644)
+					check(err)
 				}
 			}
 		}
+	} else {
+		output_script := generateScript(midi, cfg)
+		err := os.WriteFile(cfg.file_path+fmt.Sprintf("_%d", cfg.track)+".txt", []byte(output_script), 0644)
+		check(err)
 	}
-	output_script := generateScript(midi, cfg)
-	err := os.WriteFile(cfg.file_path+fmt.Sprintf("_%d", cfg.track)+".txt", []byte(output_script), 0644)
-	check(err)
-
 }

@@ -14,6 +14,10 @@ func getNoteFreq(event Event) int {
 	return int(event.Data[0])
 }
 
+func getNoteVelocity(event Event) int {
+	return int(event.Data[1])
+}
+
 func getNoteDuration(event Event) VLV {
 	return event.Delay
 }
@@ -23,4 +27,8 @@ func getTextFromEvent(event Event) string {
 		return g_unknown_text
 	}
 	return string(event.Data)
+}
+
+func getTimeSignature(event Event) int {
+	return int(event.Data[2])
 }
